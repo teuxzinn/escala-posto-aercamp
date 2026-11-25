@@ -48,7 +48,7 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 15px 25px}
   </div>
   <div id="admin" class="hidden" style="margin-top:18px">
     <div class="adminline"><b>Painel administrativo</b><button class="alt" id="logout" type="button">Sair</button></div>
-    <div class="note">Importe uma planilha (.xlsx/.xls/.csv) ou uma foto da escala. A planilha deve ter uma linha por funcionário: primeira coluna com o nome e as colunas seguintes com os dias do mês (1, 2, 3...). A importação de fotos reconhece as linhas, colunas e folgas pelo modelo padrão da escala. Confira todos os dados na prévia antes de salvar ou publicar.</div>
+    <div class="note">Importe uma planilha (.xlsx/.xls/.csv) ou uma foto da escala. A planilha deve ter uma linha por funcionário: primeira coluna com o nome e as colunas seguintes com os dias do mês (1, 2, 3...). A leitura de fotos é experimental e serve como apoio; confira todas as marcações antes de salvar ou publicar.</div>
     <div class="adminform" style="margin-top:15px">
       <div class="two">
         <div><label for="newMonth">Mês da escala</label><input type="month" id="newMonth"></div>
@@ -198,64 +198,100 @@ async function importSpreadsheet(file){
 }
 
 async function importImage(file){
-  showStatus('importStatus','Analisando a tabela e reconhecendo os dados. Isso pode levar alguns minutos…');
-  const result=await Tesseract.recognize(file,'por+eng',{logger:m=>{if(m.status==='recognizing text')$('importStatus').textContent=`Reconhecendo texto: ${Math.round((m.progress||0)*100)}%`}});
-  const words=(result.data.words||[]).filter(w=>w.text&&w.bbox&&Number(w.confidence??0)>=15);
+  showStatus('importStatus','Analisando a tabela pela posição das células e pelas cores…');
+  const result=await Tesseract.recognize(file,'por+eng',{logger:m=>{if(m.status==='recognizing text')$('importStatus').textContent=`Reconhecendo nomes e feriados: ${Math.round((m.progress||0)*100)}%`}});
   const bitmap=await createImageBitmap(file);
   const canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;
   const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(bitmap,0,0);
   const W=canvas.width,H=canvas.height;
+  const parts=selectedMonthParts();if(!parts)throw new Error('Selecione o mês antes de importar a imagem.');
+  const count=parts.days;
+  const norm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
   const center=w=>({x:(w.bbox.x0+w.bbox.x1)/2,y:(w.bbox.y0+w.bbox.y1)/2});
-  const clean=t=>String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9*]/g,'');
-  const monthParts=selectedMonthParts();if(!monthParts)throw new Error('Selecione o mês antes de importar a imagem.');
-  const count=monthParts.days;
-  const headerWords=words.map(w=>({...w,c:center(w),v:clean(w.text)})).filter(w=>w.c.y>H*.19&&w.c.y<H*.30&&/^\d{1,2}\*?$/.test(w.v));
-  const headerByDay=new Map();
-  headerWords.forEach(w=>{const d=parseInt(w.v,10);if(d>=1&&d<=31&&!headerByDay.has(d))headerByDay.set(d,w)});
-  let x0,xStep;
-  if(headerByDay.has(1)&&headerByDay.has(31)){x0=headerByDay.get(1).c.x;xStep=(headerByDay.get(31).c.x-x0)/30}
-  else if(headerByDay.size>=2){const pts=[...headerByDay.entries()].map(([d,w])=>[d-1,w.c.x]);const mx=pts.reduce((a,p)=>a+p[0],0)/pts.length,my=pts.reduce((a,p)=>a+p[1],0)/pts.length;const den=pts.reduce((a,p)=>a+(p[0]-mx)**2,0);xStep=pts.reduce((a,p)=>a+(p[0]-mx)*(p[1]-my),0)/den;x0=my-xStep*mx}
-  else throw new Error('Não consegui localizar os números dos dias no cabeçalho. Envie uma foto completa, reta e nítida da escala.');
-  if(!Number.isFinite(xStep)||xStep<8)throw new Error('Não consegui calcular as colunas dos dias. Verifique se a imagem está completa.');
-  const rowCenters=[.344,.452,.586,.696,.829,.939].map(v=>v*H);
-  const rowNames=rowCenters.map(y=>words.map(w=>({...w,c:center(w)})).filter(w=>w.c.x<W*.225&&Math.abs(w.c.y-y)<H*.045).sort((a,b)=>a.bbox.x0-b.bbox.x0).map(w=>w.text).join(' '));
-  const matchEmployee=nameText=>{
-    const source=normalizeName(nameText).split(' ').filter(Boolean);let best=null,bestScore=0;
-    for(const e of employees){const target=normalizeName(e.name).split(' ').filter(Boolean);const hits=target.filter(t=>source.some(s=>s===t||s.includes(t)||t.includes(s))).length;const score=target.length?hits/target.length:0;if(score>bestScore){best=e;bestScore=score}}
-    return bestScore>=.5?best:null;
+  const words=(result.data.words||[]).filter(w=>w.text&&w.bbox&&Number(w.confidence??0)>=10).map(w=>({...w,c:center(w)}));
+
+  // Este modelo mantém a tabela com a coluna dos dias começando após o campo HORÁRIO.
+  // Usamos a geometria da tabela, não a leitura sequencial dos números do cabeçalho.
+  const xStart=W*0.2285, xEnd=W*0.9790, cellW=(xEnd-xStart)/count;
+  if(cellW<8)throw new Error('A imagem está muito estreita para separar as colunas. Envie a escala em resolução maior.');
+
+  // Linhas padrão do modelo Aercamp. Os nomes reconhecidos pelo OCR ajustam os centros quando possível.
+  const fallbackY=[0.344,0.454,0.591,0.698,0.829,0.939].map(v=>v*H);
+  const nameWords=words.filter(w=>w.c.x<W*0.225&&w.c.y>H*0.29&&w.c.y<H*0.99);
+  const clusters=[];
+  nameWords.sort((a,b)=>a.c.y-b.c.y).forEach(w=>{
+    let g=clusters.find(g=>Math.abs(g.y-w.c.y)<H*0.045);
+    if(!g){g={y:w.c.y,items:[]};clusters.push(g)}
+    g.items.push(w);g.y=g.items.reduce((sum,z)=>sum+z.c.y,0)/g.items.length;
+  });
+  const lineText=clusters.map(g=>({y:g.y,text:g.items.sort((a,b)=>a.bbox.x0-b.bbox.x0).map(w=>w.text).join(' ')}));
+  const similarity=(a,b)=>{
+    const A=norm(a).split(' ').filter(Boolean),B=norm(b).split(' ').filter(Boolean);
+    if(!A.length||!B.length)return 0;
+    const hits=B.filter(t=>A.some(s=>s===t||(s.length>=4&&t.length>=4&&(s.includes(t)||t.includes(s))))).length;
+    return hits/B.length;
   };
+  const rowAssignments=[];const usedIds=new Set();
+  employees.forEach(emp=>{
+    let best=null,bestScore=0;
+    lineText.forEach(line=>{const score=similarity(line.text,emp.name);if(score>bestScore){bestScore=score;best=line}});
+    if(best&&bestScore>=0.5&&!usedIds.has(String(emp.id))){rowAssignments.push({employee:emp,y:best.y,source:'nome'});usedIds.add(String(emp.id))}
+  });
+  // Caso o OCR não reconheça um nome, usa a ordem nominal fixa do modelo como contingência.
+  const templateOrder=['JOSE GERALDO','JURACI DA SILVA','EZIQUIEL FERREIRA','MAYCON ABELARDO','GILBERTO ROSA','MATEUS SOUZA'];
+  templateOrder.forEach((n,i)=>{
+    const emp=employees.find(e=>norm(e.name)===norm(n));
+    if(emp&&!usedIds.has(String(emp.id))){rowAssignments.push({employee:emp,y:fallbackY[i],source:'posição padrão'});usedIds.add(String(emp.id))}
+  });
+  // Funcionários adicionais podem ser associados às linhas restantes por nome reconhecido.
+  if(rowAssignments.length<employees.length){
+    const remaining=employees.filter(e=>!usedIds.has(String(e.id)));
+    const remainingLines=lineText.filter(line=>!rowAssignments.some(r=>Math.abs(r.y-line.y)<H*0.035)).sort((a,b)=>a.y-b.y);
+    remaining.forEach(emp=>{
+      let best=null,score=0;remainingLines.forEach(line=>{const v=similarity(line.text,emp.name);if(v>score){score=v;best=line}});
+      if(best&&score>=0.5){rowAssignments.push({employee:emp,y:best.y,source:'nome'});usedIds.add(String(emp.id));remainingLines.splice(remainingLines.indexOf(best),1)}
+    });
+  }
+  rowAssignments.sort((a,b)=>a.y-b.y);
+
+  // Detecta asterisco no cabeçalho pelo OCR dentro da coluna do respectivo dia.
+  const holidayDays=new Set();
+  words.forEach(w=>{
+    const raw=String(w.text||'').replace(/\s/g,'');
+    if(w.c.y<H*0.17||w.c.y>H*0.31)return;
+    if(/\d{1,2}\*/.test(raw)){const day=parseInt(raw,10);if(day>=1&&day<=count)holidayDays.add(day);return}
+    // Alguns OCRs separam o asterisco do número; nesse caso, localizamos a coluna pela coordenada X.
+    if(raw==='*'){const day=Math.round((w.c.x-xStart)/cellW+0.5);if(day>=1&&day<=count)holidayDays.add(day)}
+  });
+  // Amostra vários pontos do interior da célula para detectar o fundo amarelo, evitando linhas e letras.
   const yellowAt=(x,y)=>{
     const xx=Math.max(0,Math.min(W-1,Math.round(x))),yy=Math.max(0,Math.min(H-1,Math.round(y)));
-    const px=ctx.getImageData(xx,yy,1,1).data;return px[0]>165&&px[1]>145&&px[2]<115;
+    const px=ctx.getImageData(xx,yy,1,1).data;
+    return px[0]>175&&px[1]>150&&px[2]<125&&px[0]-px[2]>75;
   };
-  const holidayDays=new Set();
-  for(let d=1;d<=count;d++){const cx=x0+xStep*(d-1);if(words.some(w=>{const c=center(w);return c.y>H*.19&&c.y<H*.30&&Math.abs(c.x-cx)<xStep*.45&&String(w.text).includes('*')}))holidayDays.add(d)}
-  const parsed=[],issues=[],used=new Set();
-  for(let r=0;r<rowCenters.length;r++){
-    const emp=matchEmployee(rowNames[r]);
-    if(!emp){issues.push(`Linha ${r+1}: não consegui identificar o funcionário (leitura: ${rowNames[r]||'nome não reconhecido'}).`);continue}
-    if(used.has(String(emp.id))){issues.push(`${emp.name}: o nome apareceu mais de uma vez na imagem.`);continue}
-    used.add(String(emp.id));const codes=[];
+  const cellIsYellow=(x,y)=>{
+    const offsets=[[-.22,0],[.22,0],[0,-.22],[0,.22],[-.16,-.18],[.16,.18]];
+    return offsets.filter(([dx,dy])=>yellowAt(x+dx*cellW,y+dy*H*0.025)).length>=2;
+  };
+  const issues=[],loadedNames=[];
+  for(const row of rowAssignments){
+    const codes=[];
     for(let d=1;d<=count;d++){
-      const x=x0+xStep*(d-1),y=rowCenters[r];
-      const holiday=holidayDays.has(d)||(headerByDay.get(d)?.v||'').includes('*');
-      const isOff=[[-.22,-.12],[.22,-.12],[-.22,.12],[.22,.12],[0,0]].some(([dx,dy])=>yellowAt(x+dx*xStep,y+dy*H*.018));
-      const cellWords=words.filter(w=>{const c=center(w);return Math.abs(c.x-x)<xStep*.43&&Math.abs(c.y-y)<H*.035});
-      const hasF=cellWords.some(w=>/^F\*?$/i.test(w.text.trim()));
-      const hasNumber=cellWords.some(w=>/^\d{1,2}\*?$/.test(clean(w.text)));
-      if(!isOff&&!hasF&&!hasNumber){issues.push(`${emp.name}, dia ${d}: marcação pouco nítida; confira na prévia.`)}
-      codes.push(isOff||hasF?(holiday?'FOLGA*':'FOLGA'):(holiday?'TRABALHO*':'TRABALHO'));
+      const x=xStart+(d-.5)*cellW,y=row.y;
+      const off=cellIsYellow(x,y),holiday=holidayDays.has(d);
+      codes.push(off?(holiday?'FOLGA*':'FOLGA'):(holiday?'TRABALHO*':'TRABALHO'));
     }
-    const ta=document.querySelector(`[data-employee="${CSS.escape(String(emp.id))}"]`);
-    if(ta){ta.value=codes.join(', ');parsed.push(emp.name)}else issues.push(`${emp.name}: editor não encontrado.`);
+    const ta=document.querySelector(`[data-employee="${CSS.escape(String(row.employee.id))}"]`);
+    if(ta){ta.value=codes.join(', ');loadedNames.push(row.employee.name)}
+    else issues.push(`${row.employee.name}: editor não encontrado.`);
   }
-  if(parsed.length!==employees.length)issues.push(`Foram identificados ${parsed.length} de ${employees.length} funcionários ativos. Confira se a imagem contém todas as linhas.`);
-  if(headerByDay.size<count)issues.push(`O cabeçalho permitiu reconhecer ${headerByDay.size} números de dia. Confira especialmente os feriados e os últimos dias do mês.`);
-  $('ocrText').value=(result.data.text||'')+'\n\nLinhas identificadas:\n'+rowNames.map((n,i)=>`${i+1}. ${n||'não reconhecida'}`).join('\n');
+  if(!holidayDays.size)issues.push('Nenhum asterisco foi reconhecido no cabeçalho. Confira os feriados manualmente na prévia.');
+  if(loadedNames.length!==employees.length)issues.push(`Foram preenchidos ${loadedNames.length} de ${employees.length} funcionários ativos. Confira os nomes e as linhas da imagem.`);
+  if(rowAssignments.some(r=>r.source==='posição padrão'))issues.push('Alguns nomes foram associados pela posição padrão da tabela. Confirme se cada linha corresponde ao funcionário correto.');
+  $('ocrText').value=(result.data.text||'')+'\n\nFuncionários associados:\n'+rowAssignments.map(r=>`${r.employee.name} — ${Math.round(r.y/H*1000)/10}% da altura (${r.source})`).join('\n')+'\n\nFeriados identificados: '+([...holidayDays].sort((a,b)=>a-b).join(', ')||'nenhum');
   $('imagePreview').classList.remove('hidden');
-  return {loaded:parsed.length,issues,raw:result.data.text||''};
+  return {loaded:loadedNames.length,issues,raw:result.data.text||''};
 }
-
 async function processSelectedFile(){
   const file=$('scheduleFile').files[0];if(!file){showStatus('importStatus','Selecione uma foto ou planilha primeiro.','err');return}
   if(!daysInSelectedMonth()){showStatus('importStatus','Selecione o mês da escala.','err');return}
@@ -272,7 +308,6 @@ async function processSelectedFile(){
   }catch(e){showStatus('importStatus','Não foi possível ler o arquivo: '+e.message,'err')}
   finally{setBusy($('processFile'),false)}
 }
-
 async function saveSchedule(publish){
   const p=selectedMonthParts();if(!p){showStatus('adminStatus','Escolha o mês.','err');return}
   if(!employees.length){showStatus('adminStatus','Não há funcionários ativos para salvar.','err');return}
@@ -294,6 +329,7 @@ async function saveSchedule(publish){
     const payload={year:p.year,month:p.month,status:'draft',note:$('note').value.trim()};
     const {data:s,error}=await sb.from('monthly_schedules').upsert(payload,{onConflict:'year,month'}).select('id').single();
     if(error)throw error;
+    // A tabela atual não oferece transação no cliente: se uma etapa falhar, confira os dados no painel antes de tentar novamente.
     const del=await sb.from('schedule_days').delete().eq('schedule_id',s.id);
     if(del.error)throw del.error;
     const rows=[];parsed.forEach(item=>item.days.forEach((code,i)=>{if(code!=='SEM REGISTRO')rows.push({schedule_id:s.id,employee_id:item.employee_id,day:i+1,code})}));
