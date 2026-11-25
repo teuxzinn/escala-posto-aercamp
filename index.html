@@ -15,7 +15,146 @@ label{display:block;font-size:13px;font-weight:700;margin-bottom:7px;color:#4254
 button{border:0;border-radius:10px;padding:12px 17px;background:var(--navy);color:white;font:inherit;font-weight:700;cursor:pointer}button:disabled{opacity:.55;cursor:wait}button.alt{background:#eaf0f5;color:var(--navy)}button.red{background:#963d3d}
 .hidden{display:none!important}.headrow,.adminline{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.headrow h2{margin:0;font-size:21px}.muted,.help{color:var(--muted);font-size:13px}
 .legend{display:flex;flex-wrap:wrap;gap:7px;margin:15px 0}.pill{font-size:12px;padding:7px 10px;border-radius:20px;background:#edf2f6}.pill.work{background:var(--green)}.pill.off{background:var(--red)}.pill.special{background:var(--yellow)}.pill.td{background:var(--bluep)}
-.calendar{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;margin-top:15px}.weekday{text-align:center;font-size:11px;color:var(--muted);font-weight:800;padding:5px 0}.day{border:1px solid var(--line);border-radius:9px;min-height:68px;padding:7px 3px;text-align:center;background:white}.day .num{font-size:12px;color:var(--muted)}.day .label{font-size:11px;font-weight:800;margin-top:8px}.day.work{background:var(--green);border-color:#cce8d4}.day.off{background:var(--red);border-color:#f4caca}.day.special{background:var(--yellow);border-color:#f0df9c}.day.td{background:var(--bluep);border-color:#c5d8fa}.day.blank{background:#f5f6f7;color:#9aa5b1}
+/* CALENDÁRIO */
+.calendar{
+  display:grid;
+  grid-template-columns:repeat(7,minmax(0,1fr));
+  gap:7px;
+  margin-top:15px;
+  width:100%;
+}
+
+.weekday{
+  text-align:center;
+  font-size:12px;
+  color:var(--muted);
+  font-weight:800;
+  padding:7px 0;
+}
+
+.day{
+  border:1px solid var(--line);
+  border-radius:11px;
+  min-width:0;
+  min-height:82px;
+  padding:9px 3px;
+  text-align:center;
+  background:white;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:flex-start;
+}
+
+.day .num{
+  font-size:13px;
+  color:var(--muted);
+  font-weight:700;
+}
+
+.day .label{
+  font-size:12px;
+  font-weight:850;
+  margin-top:12px;
+  line-height:1.2;
+  overflow-wrap:anywhere;
+}
+
+.day.work{
+  background:var(--green);
+  border-color:#cce8d4;
+}
+
+.day.off{
+  background:var(--red);
+  border-color:#f4caca;
+}
+
+.day.special{
+  background:var(--yellow);
+  border-color:#f0df9c;
+}
+
+.day.td{
+  background:var(--bluep);
+  border-color:#c5d8fa;
+}
+
+.day.blank{
+  background:#f5f6f7;
+  color:#9aa5b1;
+}
+
+/* ADAPTAÇÃO PARA CELULARES */
+@media(max-width:650px){
+  .grid,.two{
+    grid-template-columns:1fr;
+  }
+
+  .calendar{
+    gap:4px;
+  }
+
+  .weekday{
+    font-size:11px;
+    padding:6px 0;
+  }
+
+  .day{
+    min-height:65px;
+    padding:7px 1px;
+    border-radius:8px;
+  }
+
+  .day .num{
+    font-size:12px;
+  }
+
+  .day .label{
+    font-size:10px;
+    margin-top:10px;
+  }
+
+  .card{
+    padding:15px;
+  }
+}
+
+/* ADAPTAÇÃO PARA TELAS MUITO PEQUENAS */
+@media(max-width:380px){
+  .calendar{
+    gap:3px;
+  }
+
+  .day{
+    min-height:59px;
+    padding:6px 0;
+  }
+
+  .weekday{
+    font-size:10px;
+  }
+
+  .day .num{
+    font-size:11px;
+  }
+
+  .day .label{
+    font-size:9px;
+    margin-top:9px;
+  }
+}
+
+/* TELAS GRANDES */
+@media(min-width:900px){
+  .day{
+    min-height:90px;
+  }
+
+  .day .label{
+    font-size:13px;
+  }
+}
 .note{background:#f8fafc;border-left:4px solid #d5a72d;padding:12px;border-radius:8px;font-size:13px;line-height:1.5;margin-top:16px;white-space:pre-wrap}
 .adminform{display:grid;gap:12px}.employee-box{border:1px solid var(--line);border-radius:12px;padding:13px;margin:12px 0}.employee-box h3{margin:0 0 8px;font-size:15px}.status{padding:10px 12px;border-radius:9px;background:#eef4f8;font-size:13px;margin-top:10px;white-space:pre-wrap;overflow-wrap:anywhere}.status.err{background:#ffe8e8;color:#812d2d}.status.ok{background:#e4f5e9;color:#205b32}.status.warn{background:#fff4c8;color:#765b00}
 .actions{display:flex;gap:10px;flex-wrap:wrap}.section-title{margin:0 0 10px}.divider{border:0;border-top:1px solid var(--line);margin:18px 0}
@@ -85,7 +224,14 @@ function showStatus(id,msg,type=''){const el=$(id);el.textContent=msg;el.classNa
 function hideStatus(id){$(id).classList.add('hidden')}
 function monthDays(year,month){return new Date(year,month,0).getDate()}
 function selectedMonthParts(){const v=$('newMonth').value;if(!v)return null;const [y,m]=v.split('-').map(Number);return {year:y,month:m,days:monthDays(y,m)}}
-function labelFor(code){if(code==='FOLGA')return ['FOLGA','off'];if(code==='FOLGA*')return ['FOLGA*','special'];if(code==='TD')return ['TD','td'];if(code==='TRABALHO*')return ['TRABALHO*','special'];if(code==='TRABALHO')return ['TRABALHO','work'];return ['SEM REGISTRO','blank']}
+function labelFor(code){
+  if(code==='FOLGA')return ['FOLGA','off'];
+  if(code==='FOLGA*')return ['FOLGA*','special'];
+  if(code==='TD')return ['TD','td'];
+  if(code==='TRABALHO*')return ['TRAB.*','special'];
+  if(code==='TRABALHO')return ['TRAB.','work'];
+  return ['—','blank'];
+}
 function normalizeName(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim()}
 function normalizeCode(v){
   const x=String(v??'').trim().toUpperCase().replace(/\s+/g,'');
@@ -113,26 +259,161 @@ async function loadEmployees(){
   employees.forEach(e=>sel.add(new Option(e.name,e.id)));
 }
 async function renderCalendar(){
-  const sid=$('month').value,eid=$('employee').value;
-  if(!sid||!eid){showStatus('publicStatus','Selecione o mês e o funcionário.','err');return}
+  const sid=$('month').value;
+  const eid=$('employee').value;
+
+  if(!sid||!eid){
+    showStatus('publicStatus','Selecione o mês e o funcionário.','err');
+    return;
+  }
+
   const [{data:s,error:se},{data:days,error:de}]=await Promise.all([
-    sb.from('monthly_schedules').select('id,year,month,note').eq('id',sid).single(),
-    sb.from('schedule_days').select('day,code').eq('schedule_id',sid).eq('employee_id',eid).order('day')
+    sb.from('monthly_schedules')
+      .select('id,year,month,note')
+      .eq('id',sid)
+      .single(),
+
+    sb.from('schedule_days')
+      .select('day,code')
+      .eq('schedule_id',sid)
+      .eq('employee_id',eid)
+      .order('day')
   ]);
-  if(se||de){showStatus('publicStatus','Não foi possível carregar a escala: '+(se?.message||de?.message),'err');return}
-  const emp=employees.find(x=>String(x.id)===String(eid));if(!emp){showStatus('publicStatus','Funcionário não encontrado.','err');return}
-  const count=monthDays(s.year,s.month),first=new Date(s.year,s.month-1,1).getDay(),map=new Map((days||[]).map(d=>[Number(d.day),d.code]));
-  let cells=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].map(x=>`<div class="weekday">${x}</div>`).join('');
-  for(let i=0;i<first;i++)cells+='<div aria-hidden="true"></div>';
-  for(let d=1;d<=count;d++){const [lab,cl]=labelFor(map.get(d)||'');cells+=`<div class="day ${cl}"><div class="num">${d}</div><div class="label">${lab}</div></div>`}
-  const result=$('result');result.replaceChildren();
-  const head=document.createElement('div');head.className='headrow';
-  const title=document.createElement('div');const h=document.createElement('h2');h.textContent=emp.name;const sub=document.createElement('div');sub.className='muted';sub.textContent=`${months[s.month-1]} de ${s.year} · ${emp.shift||'Turno não informado'}`;title.append(h,sub);
-  const badge=document.createElement('span');badge.className='pill';badge.textContent='Escala individual';head.append(title,badge);result.append(head);
-  const legend=document.createElement('div');legend.className='legend';[['TRABALHO','work'],['FOLGA','off'],['* Marcação especial','special'],['TD · Turno diferenciado','td']].forEach(([t,c])=>{const p=document.createElement('span');p.className='pill '+c;p.textContent=t;legend.append(p)});result.append(legend);
-  const cal=document.createElement('div');cal.className='calendar';cal.innerHTML=cells;result.append(cal);
-  if(s.note){const n=document.createElement('div');n.className='note';n.textContent=s.note;result.append(n)}
-  result.classList.remove('hidden');showStatus('publicStatus','Escala carregada.','ok');
+
+  if(se||de){
+    showStatus(
+      'publicStatus',
+      'Não foi possível carregar a escala: '+(se?.message||de?.message),
+      'err'
+    );
+    return;
+  }
+
+  const emp=employees.find(x=>String(x.id)===String(eid));
+
+  if(!emp){
+    showStatus('publicStatus','Funcionário não encontrado.','err');
+    return;
+  }
+
+  const count=monthDays(s.year,s.month);
+  const first=new Date(s.year,s.month-1,1).getDay();
+
+  const map=new Map(
+    (days||[]).map(d=>[Number(d.day),d.code])
+  );
+
+  const result=$('result');
+  result.replaceChildren();
+
+  /* CABEÇALHO */
+  const head=document.createElement('div');
+  head.className='headrow';
+
+  const title=document.createElement('div');
+
+  const h=document.createElement('h2');
+  h.textContent=emp.name;
+
+  const sub=document.createElement('div');
+  sub.className='muted';
+  sub.textContent=
+    `${months[s.month-1]} de ${s.year} · ${emp.shift||'Turno não informado'}`;
+
+  title.append(h,sub);
+
+  const badge=document.createElement('span');
+  badge.className='pill';
+  badge.textContent='Escala individual';
+
+  head.append(title,badge);
+  result.append(head);
+
+  /* LEGENDA */
+  const legend=document.createElement('div');
+  legend.className='legend';
+
+  const legendItems=[
+    ['TRAB.','work'],
+    ['FOLGA','off'],
+    ['TRAB.* / FOLGA*','special'],
+    ['TD · Turno diferenciado','td']
+  ];
+
+  legendItems.forEach(([textValue,className])=>{
+    const p=document.createElement('span');
+    p.className='pill '+className;
+    p.textContent=textValue;
+    legend.append(p);
+  });
+
+  result.append(legend);
+
+  /* GRADE DO CALENDÁRIO */
+  const cal=document.createElement('div');
+  cal.className='calendar';
+  cal.setAttribute('role','grid');
+  cal.setAttribute(
+    'aria-label',
+    `Escala de ${emp.name}, ${months[s.month-1]} de ${s.year}`
+  );
+
+  const weekdays=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+
+  weekdays.forEach(day=>{
+    const cell=document.createElement('div');
+    cell.className='weekday';
+    cell.textContent=day;
+    cell.setAttribute('role','columnheader');
+    cal.append(cell);
+  });
+
+  /* ESPAÇOS ANTES DO PRIMEIRO DIA */
+  for(let i=0;i<first;i++){
+    const empty=document.createElement('div');
+    empty.setAttribute('aria-hidden','true');
+    cal.append(empty);
+  }
+
+  /* DIAS DO MÊS */
+  for(let d=1;d<=count;d++){
+    const code=map.get(d)||'';
+    const [label,className]=labelFor(code);
+
+    const cell=document.createElement('div');
+    cell.className='day '+className;
+    cell.setAttribute('role','gridcell');
+
+    const number=document.createElement('div');
+    number.className='num';
+    number.textContent=d;
+
+    const status=document.createElement('div');
+    status.className='label';
+    status.textContent=label;
+
+    cell.setAttribute(
+      'aria-label',
+      `Dia ${d}: ${code||'Sem registro'}`
+    );
+
+    cell.append(number,status);
+    cal.append(cell);
+  }
+
+  result.append(cal);
+
+  /* OBSERVAÇÕES */
+  if(s.note){
+    const n=document.createElement('div');
+    n.className='note';
+    n.textContent=s.note;
+    result.append(n);
+  }
+
+  result.classList.remove('hidden');
+
+  showStatus('publicStatus','Escala carregada.','ok');
 }
 async function checkAdmin(){
   const {data:{user},error:authError}=await sb.auth.getUser();
