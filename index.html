@@ -48,7 +48,7 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 15px 25px}
   </div>
   <div id="admin" class="hidden" style="margin-top:18px">
     <div class="adminline"><b>Painel administrativo</b><button class="alt" id="logout" type="button">Sair</button></div>
-    <div class="note">Importe uma planilha (.xlsx/.xls/.csv) ou uma foto da escala. A planilha deve ter uma linha por funcionário: primeira coluna com o nome e as colunas seguintes com os dias do mês (1, 2, 3...). A leitura de fotos é experimental e serve como apoio; confira todas as marcações antes de salvar ou publicar.</div>
+    <div class="note">Importe uma planilha (.xlsx/.xls/.csv) ou uma foto da escala. A planilha deve ter uma linha por funcionário: primeira coluna com o nome e as colunas seguintes com os dias do mês (1, 2, 3...). A importação de fotos reconhece as linhas, colunas e folgas pelo modelo padrão da escala. Confira todos os dados na prévia antes de salvar ou publicar.</div>
     <div class="adminform" style="margin-top:15px">
       <div class="two">
         <div><label for="newMonth">Mês da escala</label><input type="month" id="newMonth"></div>
@@ -196,11 +196,66 @@ async function importSpreadsheet(file){
   if(!loaded)issues.unshift('Nenhum nome da planilha correspondeu exatamente a um funcionário ativo.');
   return {loaded,issues};
 }
+
 async function importImage(file){
-  showStatus('importStatus','Lendo o texto da foto. Isso pode levar alguns minutos…');
+  showStatus('importStatus','Analisando a tabela e reconhecendo os dados. Isso pode levar alguns minutos…');
   const result=await Tesseract.recognize(file,'por+eng',{logger:m=>{if(m.status==='recognizing text')$('importStatus').textContent=`Reconhecendo texto: ${Math.round((m.progress||0)*100)}%`}});
-  return {loaded:0,issues:['A foto foi convertida em texto, mas as células não são aplicadas automaticamente. Confira o texto reconhecido e preencha/corrija as marcações manualmente.'],raw:result.data.text||''};
+  const words=(result.data.words||[]).filter(w=>w.text&&w.bbox&&Number(w.confidence??0)>=15);
+  const bitmap=await createImageBitmap(file);
+  const canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(bitmap,0,0);
+  const W=canvas.width,H=canvas.height;
+  const center=w=>({x:(w.bbox.x0+w.bbox.x1)/2,y:(w.bbox.y0+w.bbox.y1)/2});
+  const clean=t=>String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9*]/g,'');
+  const monthParts=selectedMonthParts();if(!monthParts)throw new Error('Selecione o mês antes de importar a imagem.');
+  const count=monthParts.days;
+  const headerWords=words.map(w=>({...w,c:center(w),v:clean(w.text)})).filter(w=>w.c.y>H*.19&&w.c.y<H*.30&&/^\d{1,2}\*?$/.test(w.v));
+  const headerByDay=new Map();
+  headerWords.forEach(w=>{const d=parseInt(w.v,10);if(d>=1&&d<=31&&!headerByDay.has(d))headerByDay.set(d,w)});
+  let x0,xStep;
+  if(headerByDay.has(1)&&headerByDay.has(31)){x0=headerByDay.get(1).c.x;xStep=(headerByDay.get(31).c.x-x0)/30}
+  else if(headerByDay.size>=2){const pts=[...headerByDay.entries()].map(([d,w])=>[d-1,w.c.x]);const mx=pts.reduce((a,p)=>a+p[0],0)/pts.length,my=pts.reduce((a,p)=>a+p[1],0)/pts.length;const den=pts.reduce((a,p)=>a+(p[0]-mx)**2,0);xStep=pts.reduce((a,p)=>a+(p[0]-mx)*(p[1]-my),0)/den;x0=my-xStep*mx}
+  else throw new Error('Não consegui localizar os números dos dias no cabeçalho. Envie uma foto completa, reta e nítida da escala.');
+  if(!Number.isFinite(xStep)||xStep<8)throw new Error('Não consegui calcular as colunas dos dias. Verifique se a imagem está completa.');
+  const rowCenters=[.344,.452,.586,.696,.829,.939].map(v=>v*H);
+  const rowNames=rowCenters.map(y=>words.map(w=>({...w,c:center(w)})).filter(w=>w.c.x<W*.225&&Math.abs(w.c.y-y)<H*.045).sort((a,b)=>a.bbox.x0-b.bbox.x0).map(w=>w.text).join(' '));
+  const matchEmployee=nameText=>{
+    const source=normalizeName(nameText).split(' ').filter(Boolean);let best=null,bestScore=0;
+    for(const e of employees){const target=normalizeName(e.name).split(' ').filter(Boolean);const hits=target.filter(t=>source.some(s=>s===t||s.includes(t)||t.includes(s))).length;const score=target.length?hits/target.length:0;if(score>bestScore){best=e;bestScore=score}}
+    return bestScore>=.5?best:null;
+  };
+  const yellowAt=(x,y)=>{
+    const xx=Math.max(0,Math.min(W-1,Math.round(x))),yy=Math.max(0,Math.min(H-1,Math.round(y)));
+    const px=ctx.getImageData(xx,yy,1,1).data;return px[0]>165&&px[1]>145&&px[2]<115;
+  };
+  const holidayDays=new Set();
+  for(let d=1;d<=count;d++){const cx=x0+xStep*(d-1);if(words.some(w=>{const c=center(w);return c.y>H*.19&&c.y<H*.30&&Math.abs(c.x-cx)<xStep*.45&&String(w.text).includes('*')}))holidayDays.add(d)}
+  const parsed=[],issues=[],used=new Set();
+  for(let r=0;r<rowCenters.length;r++){
+    const emp=matchEmployee(rowNames[r]);
+    if(!emp){issues.push(`Linha ${r+1}: não consegui identificar o funcionário (leitura: ${rowNames[r]||'nome não reconhecido'}).`);continue}
+    if(used.has(String(emp.id))){issues.push(`${emp.name}: o nome apareceu mais de uma vez na imagem.`);continue}
+    used.add(String(emp.id));const codes=[];
+    for(let d=1;d<=count;d++){
+      const x=x0+xStep*(d-1),y=rowCenters[r];
+      const holiday=holidayDays.has(d)||(headerByDay.get(d)?.v||'').includes('*');
+      const isOff=[[-.22,-.12],[.22,-.12],[-.22,.12],[.22,.12],[0,0]].some(([dx,dy])=>yellowAt(x+dx*xStep,y+dy*H*.018));
+      const cellWords=words.filter(w=>{const c=center(w);return Math.abs(c.x-x)<xStep*.43&&Math.abs(c.y-y)<H*.035});
+      const hasF=cellWords.some(w=>/^F\*?$/i.test(w.text.trim()));
+      const hasNumber=cellWords.some(w=>/^\d{1,2}\*?$/.test(clean(w.text)));
+      if(!isOff&&!hasF&&!hasNumber){issues.push(`${emp.name}, dia ${d}: marcação pouco nítida; confira na prévia.`)}
+      codes.push(isOff||hasF?(holiday?'FOLGA*':'FOLGA'):(holiday?'TRABALHO*':'TRABALHO'));
+    }
+    const ta=document.querySelector(`[data-employee="${CSS.escape(String(emp.id))}"]`);
+    if(ta){ta.value=codes.join(', ');parsed.push(emp.name)}else issues.push(`${emp.name}: editor não encontrado.`);
+  }
+  if(parsed.length!==employees.length)issues.push(`Foram identificados ${parsed.length} de ${employees.length} funcionários ativos. Confira se a imagem contém todas as linhas.`);
+  if(headerByDay.size<count)issues.push(`O cabeçalho permitiu reconhecer ${headerByDay.size} números de dia. Confira especialmente os feriados e os últimos dias do mês.`);
+  $('ocrText').value=(result.data.text||'')+'\n\nLinhas identificadas:\n'+rowNames.map((n,i)=>`${i+1}. ${n||'não reconhecida'}`).join('\n');
+  $('imagePreview').classList.remove('hidden');
+  return {loaded:parsed.length,issues,raw:result.data.text||''};
 }
+
 async function processSelectedFile(){
   const file=$('scheduleFile').files[0];if(!file){showStatus('importStatus','Selecione uma foto ou planilha primeiro.','err');return}
   if(!daysInSelectedMonth()){showStatus('importStatus','Selecione o mês da escala.','err');return}
@@ -217,6 +272,7 @@ async function processSelectedFile(){
   }catch(e){showStatus('importStatus','Não foi possível ler o arquivo: '+e.message,'err')}
   finally{setBusy($('processFile'),false)}
 }
+
 async function saveSchedule(publish){
   const p=selectedMonthParts();if(!p){showStatus('adminStatus','Escolha o mês.','err');return}
   if(!employees.length){showStatus('adminStatus','Não há funcionários ativos para salvar.','err');return}
